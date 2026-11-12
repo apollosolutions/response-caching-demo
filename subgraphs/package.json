@@ -1,0 +1,15 @@
+{
+  "name": "subgraphs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@apollo/server": "^5.5.2",
+    "@apollo/subgraph": "^2.16.0",
+    "@as-integrations/express5": "^1.1.2",
+    "express": "^5.1.0",
+    "graphql": "^16.11.0"
+  }
+}

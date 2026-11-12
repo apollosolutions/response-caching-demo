@@ -1,0 +1,149 @@
+# =============================================================================
+# Apollo Router v2.19 configuration: response caching demo
+# =============================================================================
+# Every response-caching knob used by the scenarios is here, commented with
+# the scenario that exercises it. Secrets come from environment variables
+# (.env → docker compose → ${env.*}); nothing sensitive lives in this file.
+
+supergraph:
+  listen: 0.0.0.0:4000
+  path: /
+  introspection: true
+
+sandbox:
+  enabled: true # Apollo Sandbox at http://localhost:4000 (has the cache debugger)
+homepage:
+  enabled: false
+
+health_check:
+  enabled: true
+  listen: 0.0.0.0:8088
+
+# The browser client (client/) reads these response headers.
+cors:
+  allow_any_origin: true
+  expose_headers:
+    - cache-control
+    - cache-tag
+    - x-response-cache
+    - x-response-cache-products
+    - x-response-cache-inventory
+    - x-response-cache-reviews
+    - x-response-cache-accounts
+    - x-served-at
+
+# The accounts subgraph identifies the user from x-user-id (scenario 06).
+headers:
+  all:
+    request:
+      operations:
+        - propagate:
+            named: x-user-id
+
+rhai:
+  scripts: /dist/config/rhai
+  main: main.rhai # sets private_id + x-response-cache headers
+
+# -----------------------------------------------------------------------------
+# Response caching
+# -----------------------------------------------------------------------------
+response_cache:
+  enabled: true
+
+  # Scenario 08: returns cache-debugger data when the client asks for it
+  # (Apollo Sandbox → settings → enable the cache debugger).
+  # Never enable debug in production.
+  debug: true
+
+  # Scenarios 09 & 11: active invalidation endpoint. Keep it on an internal
+  # network in production; it's published on localhost:4005 for the demo.
+  invalidation:
+    listen: 0.0.0.0:4005
+    path: /invalidation
+
+  # Scenario 07: emits a `Cache-Tag` header (subgraph, type and @cacheTag
+  # labels) so a CDN in front of the Router can purge by tag.
+  cdn_invalidation:
+    enabled: true
+
+  # --- GraphQL subgraphs ------------------------------------------------------
+  subgraph:
+    all:
+      enabled: true
+      # Fallback TTL: used when a subgraph's Cache-Control has no max-age.
+      # max-age from the subgraph always wins.
+      ttl: 120s
+      redis:
+        urls: ["${env.REDIS_URL:-redis://redis:6379}"]
+        namespace: demo
+        required_to_start: false
+        fetch_timeout: 150ms
+        insert_timeout: 500ms
+      invalidation:
+        enabled: true
+        shared_key: ${env.INVALIDATION_SHARED_KEY}
+    subgraphs:
+      # Scenario 04: reviews sends `Cache-Control: public` without max-age,
+      # so its entries live for this fallback TTL.
+      reviews:
+        ttl: 45s
+      # Scenario 06: cache PRIVATE data per user. "user_id" is the request
+      # context key that main.rhai fills from the x-user-id header.
+      accounts:
+        private_id: user_id
+
+  # --- Apollo Connectors ------------------------------------------------------
+  # Sources are named <subgraph>.<source>: catalog.rest, catalog.pricing.
+  connector:
+    all:
+      enabled: true
+      # Fallback TTL when the REST API sends no max-age (scenario 10:
+      # GET /promotions sends no Cache-Control at all).
+      ttl: 90s
+      # Required. Request headers that change what the API returns.
+      # [] = no header splits the cache.
+      cache_key_headers: []
+      redis:
+        urls: ["${env.REDIS_URL:-redis://redis:6379}"]
+        namespace: demo
+        required_to_start: false
+      invalidation:
+        enabled: true
+        # Scenario 11: connector entries are authorized separately from
+        # subgraph entries, with their own shared key.
+        shared_key: ${env.CONNECTOR_INVALIDATION_SHARED_KEY}
+    sources:
+      # Scenario 11: the pricing API returns different data per x-currency,
+      # so that header must be part of the cache key.
+      catalog.pricing:
+        cache_key_headers:
+          - x-currency
+
+# -----------------------------------------------------------------------------
+# Telemetry (scenario 12): Prometheus metrics for the Grafana dashboard
+# -----------------------------------------------------------------------------
+telemetry:
+  exporters:
+    metrics:
+      common:
+        service_name: apollo-router
+      prometheus:
+        enabled: true
+        listen: 0.0.0.0:9080
+        path: /metrics
+  instrumentation:
+    instruments:
+      cache:
+        # Hit/miss counter for subgraphs and connector sources.
+        apollo.router.response.cache:
+          attributes:
+            graphql.type.name: true
+            subgraph.name:
+              subgraph_name: true
+      subgraph:
+        # Subgraph latency split by cache status (hit | partial_hit | miss).
+        http.client.request.duration:
+          attributes:
+            subgraph.name: true
+            response.cache.status:
+              response_cache_status: status

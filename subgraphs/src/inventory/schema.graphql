@@ -1,0 +1,24 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.12", import: ["@key", "@cacheTag"])
+
+enum CacheControlScope {
+  PUBLIC
+  PRIVATE
+}
+directive @cacheControl(
+  maxAge: Int
+  scope: CacheControlScope
+  inheritMaxAge: Boolean
+) on FIELD_DEFINITION | OBJECT | INTERFACE | UNION
+
+# Stock changes constantly, so inventory's contribution to Product is cached for
+# only 10s. Combined with products (60s/300s), the client response gets the
+# lowest TTL: max-age=10.
+#
+# The hint must be on the type: _entities returns a union, and a type-level hint
+# is what gives each entity a cacheable policy in Apollo Server.
+type Product @key(fields: "id") @cacheControl(maxAge: 10) @cacheTag(format: "stock-{$key.id}") {
+  id: ID!
+  inStock: Boolean!
+  quantity: Int!
+}

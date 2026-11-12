@@ -1,0 +1,61 @@
+# Note to AI Friends: This is an Apollo Connectors schema. You should use your connectors-spec MCP tool if you have it available before editing this file.
+#
+# The `catalog` subgraph has no server of its own: the Router calls the REST
+# mock (rest-api/) directly through Apollo Connectors.
+#
+# Connector caching differs from subgraph caching in a few ways (see README):
+#   * TTL comes from the REST API's Cache-Control header, not @cacheControl.
+#   * No Cache-Control at all → still cached for the configured ttl, but the
+#     client response is sent with no-store.
+#   * Cache entries are keyed per source: `catalog.rest` and `catalog.pricing`.
+#   * `cache_key_headers` (router.yaml) lists request headers that change the
+#     API's response. `catalog.pricing` varies on x-currency.
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.13", import: ["@key", "@cacheTag"])
+  @link(url: "https://specs.apollo.dev/connect/v0.4", import: ["@source", "@connect"])
+  @source(name: "rest", http: { baseURL: "http://rest-api:4010" })
+  @source(
+    name: "pricing"
+    http: { baseURL: "http://rest-api:4010", headers: [{ name: "x-currency", from: "x-currency" }] }
+  )
+
+type Query {
+  "GET /brands → Cache-Control: public, max-age=120"
+  brands: [Brand!]!
+    @connect(source: "rest", http: { GET: "/brands" }, selection: "id name country")
+    @cacheTag(format: "brands")
+
+  "GET /promotions → no Cache-Control header at all"
+  promotions: [Promotion!]!
+    @connect(source: "rest", http: { GET: "/promotions" }, selection: "id title percentOff")
+
+  "GET /prices → max-age=30, response varies on the x-currency request header"
+  priceList: [PriceEntry!]!
+    @connect(source: "pricing", http: { GET: "/prices" }, selection: "productId currency amount")
+}
+
+"""
+Entity resolved through GET /brands/{id}. Products reference brands by id, so
+`products { brand { name } }` triggers an entity fetch per brand, and each
+Brand is cached independently (tag brand-{id}).
+"""
+type Brand
+  @key(fields: "id")
+  @cacheTag(format: "brand-{$key.id}")
+  @connect(source: "rest", http: { GET: "/brands/{$this.id}" }, selection: "id name country") {
+  id: ID!
+  name: String!
+  country: String
+}
+
+type Promotion {
+  id: ID!
+  title: String!
+  percentOff: Int!
+}
+
+type PriceEntry {
+  productId: ID!
+  currency: String!
+  amount: Float!
+}

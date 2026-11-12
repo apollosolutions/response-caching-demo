@@ -1,0 +1,32 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.12", import: ["@key"])
+
+enum CacheControlScope {
+  PUBLIC
+  PRIVATE
+}
+directive @cacheControl(
+  maxAge: Int
+  scope: CacheControlScope
+  inheritMaxAge: Boolean
+) on FIELD_DEFINITION | OBJECT | INTERFACE | UNION
+
+type Query {
+  """
+  The current user, identified by the x-user-id header.
+  scope: PRIVATE → Apollo Server sends `Cache-Control: max-age=60, private`.
+  The Router caches it per user using `private_id` (see router.yaml + Rhai).
+  """
+  me: User @cacheControl(maxAge: 60, scope: PRIVATE)
+}
+
+type User @key(fields: "id") @cacheControl(maxAge: 60, scope: PRIVATE) {
+  id: ID!
+  name: String!
+  email: String!
+  recentlyViewed: [Product!]!
+}
+
+type Product @key(fields: "id", resolvable: false) {
+  id: ID!
+}

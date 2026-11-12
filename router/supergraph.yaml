@@ -1,0 +1,25 @@
+# Composition config. Run ./scripts/compose-supergraph.sh to regenerate
+# router/supergraph.graphql after changing any schema.
+# routing_url values use Docker Compose service names.
+federation_version: =2.14.3
+subgraphs:
+  products:
+    routing_url: http://subgraphs:4001/products
+    schema:
+      file: ../subgraphs/src/products/schema.graphql
+  inventory:
+    routing_url: http://subgraphs:4001/inventory
+    schema:
+      file: ../subgraphs/src/inventory/schema.graphql
+  reviews:
+    routing_url: http://subgraphs:4001/reviews
+    schema:
+      file: ../subgraphs/src/reviews/schema.graphql
+  accounts:
+    routing_url: http://subgraphs:4001/accounts
+    schema:
+      file: ../subgraphs/src/accounts/schema.graphql
+  catalog:
+    routing_url: http://ignored # connectors call the REST API directly
+    schema:
+      file: ../connectors/catalog.graphql

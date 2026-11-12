@@ -1,0 +1,213 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/cacheTag/v0.1", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/connect/v0.4", for: EXECUTION)
+  @join__directive(graphs: [CATALOG], name: "link", args: {url: "https://specs.apollo.dev/connect/v0.4", import: ["@source", "@connect"]})
+  @join__directive(graphs: [CATALOG], name: "source", args: {name: "rest", http: {baseURL: "http://rest-api:4010"}})
+  @join__directive(graphs: [CATALOG], name: "source", args: {name: "pricing", http: {baseURL: "http://rest-api:4010", headers: [{name: "x-currency", from: "x-currency"}]}})
+{
+  query: Query
+  mutation: Mutation
+}
+
+directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean, overrideLabel: String, contextArguments: [join__ContextArgument!]) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+"""
+Entity resolved through GET /brands/{id}. Products reference brands by id, so
+`products { brand { name } }` triggers an entity fetch per brand, and each
+Brand is cached independently (tag brand-{id}).
+"""
+type Brand
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PRODUCTS, key: "id", resolvable: false)
+  @join__directive(graphs: [CATALOG], name: "federation__cacheTag", args: {format: "brand-{$key.id}"})
+  @join__directive(graphs: [CATALOG], name: "connect", args: {source: "rest", http: {GET: "/brands/{$this.id}"}, selection: "id name country"})
+{
+  id: ID!
+  name: String! @join__field(graph: CATALOG)
+  country: String @join__field(graph: CATALOG)
+}
+
+enum CacheControlScope
+  @join__type(graph: ACCOUNTS)
+  @join__type(graph: INVENTORY)
+  @join__type(graph: PRODUCTS)
+{
+  PUBLIC @join__enumValue(graph: ACCOUNTS) @join__enumValue(graph: INVENTORY) @join__enumValue(graph: PRODUCTS)
+  PRIVATE @join__enumValue(graph: ACCOUNTS) @join__enumValue(graph: INVENTORY) @join__enumValue(graph: PRODUCTS)
+}
+
+type Deal
+  @join__type(graph: PRODUCTS)
+{
+  productId: ID!
+  discountPct: Int!
+  generatedAt: String!
+}
+
+input join__ContextArgument {
+  name: String!
+  type: String!
+  context: String!
+  selection: join__FieldValue!
+}
+
+scalar join__DirectiveArguments
+
+scalar join__FieldSet
+
+scalar join__FieldValue
+
+enum join__Graph {
+  ACCOUNTS @join__graph(name: "accounts", url: "http://subgraphs:4001/accounts")
+  CATALOG @join__graph(name: "catalog", url: "http://ignored")
+  INVENTORY @join__graph(name: "inventory", url: "http://subgraphs:4001/inventory")
+  PRODUCTS @join__graph(name: "products", url: "http://subgraphs:4001/products")
+  REVIEWS @join__graph(name: "reviews", url: "http://subgraphs:4001/reviews")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Mutation
+  @join__type(graph: PRODUCTS)
+{
+  """
+  Updates a price, then calls the Router invalidation endpoint so the cached
+  product (tag product-{id}) and the product list (tag products) are evicted.
+  """
+  updateProductPrice(id: ID!, price: Float!): Product
+}
+
+type PriceEntry
+  @join__type(graph: CATALOG)
+{
+  productId: ID!
+  currency: String!
+  amount: Float!
+}
+
+"""Entity: each Product representation is cached independently for 300s."""
+type Product
+  @join__type(graph: ACCOUNTS, key: "id", resolvable: false)
+  @join__type(graph: INVENTORY, key: "id")
+  @join__type(graph: PRODUCTS, key: "id")
+  @join__type(graph: REVIEWS, key: "id")
+  @join__directive(graphs: [INVENTORY], name: "federation__cacheTag", args: {format: "stock-{$key.id}"})
+  @join__directive(graphs: [PRODUCTS], name: "federation__cacheTag", args: {format: "product-{$key.id}"})
+{
+  id: ID!
+  inStock: Boolean! @join__field(graph: INVENTORY)
+  quantity: Int! @join__field(graph: INVENTORY)
+  name: String! @join__field(graph: PRODUCTS)
+  description: String @join__field(graph: PRODUCTS)
+  price: Float! @join__field(graph: PRODUCTS)
+
+  """
+  Resolved by the catalog connector (REST) through an entity fetch.
+  Gotcha: Apollo Server gives object-typed fields a default maxAge of 0, which
+  would make every response containing `brand` no-store. inheritMaxAge keeps
+  the parent's TTL.
+  """
+  brand: Brand @join__field(graph: PRODUCTS)
+  reviews: [Review!]! @join__field(graph: REVIEWS)
+  averageRating: Float @join__field(graph: REVIEWS)
+}
+
+type Promotion
+  @join__type(graph: CATALOG)
+{
+  id: ID!
+  title: String!
+  percentOff: Int!
+}
+
+type Query
+  @join__type(graph: ACCOUNTS)
+  @join__type(graph: CATALOG)
+  @join__type(graph: INVENTORY)
+  @join__type(graph: PRODUCTS)
+  @join__type(graph: REVIEWS)
+{
+  """
+  The current user, identified by the x-user-id header.
+  scope: PRIVATE → Apollo Server sends `Cache-Control: max-age=60, private`.
+  The Router caches it per user using `private_id` (see router.yaml + Rhai).
+  """
+  me: User @join__field(graph: ACCOUNTS)
+
+  """GET /brands → Cache-Control: public, max-age=120"""
+  brands: [Brand!]! @join__field(graph: CATALOG) @join__directive(graphs: [CATALOG], name: "connect", args: {source: "rest", http: {GET: "/brands"}, selection: "id name country"}) @join__directive(graphs: [CATALOG], name: "federation__cacheTag", args: {format: "brands"})
+
+  """GET /promotions → no Cache-Control header at all"""
+  promotions: [Promotion!]! @join__field(graph: CATALOG) @join__directive(graphs: [CATALOG], name: "connect", args: {source: "rest", http: {GET: "/promotions"}, selection: "id title percentOff"})
+
+  """
+  GET /prices → max-age=30, response varies on the x-currency request header
+  """
+  priceList: [PriceEntry!]! @join__field(graph: CATALOG) @join__directive(graphs: [CATALOG], name: "connect", args: {source: "pricing", http: {GET: "/prices"}, selection: "productId currency amount"})
+
+  """
+  Root field: cached as one unit for 60s. Invalidate with tag `products`.
+  """
+  products: [Product!]! @join__field(graph: PRODUCTS) @join__directive(graphs: [PRODUCTS], name: "federation__cacheTag", args: {format: "products"})
+
+  """
+  Root field with an argument: tag is interpolated from $args → product-1, product-2, ...
+  """
+  product(id: ID!): Product @join__field(graph: PRODUCTS) @join__directive(graphs: [PRODUCTS], name: "federation__cacheTag", args: {format: "product-{$args.id}"})
+
+  """Used by scenario 02 to show per-entity reuse and partial hits."""
+  productsByIds(ids: [ID!]!): [Product!]! @join__field(graph: PRODUCTS)
+
+  """maxAge 0 → Apollo Server sends Cache-Control: no-store → never cached."""
+  dealOfTheMinute: Deal @join__field(graph: PRODUCTS)
+
+  """
+  Always returns a GraphQL error. Responses with errors are never cached.
+  """
+  brokenProduct: Product @join__field(graph: PRODUCTS)
+}
+
+type Review
+  @join__type(graph: REVIEWS)
+{
+  id: ID!
+  rating: Int!
+  body: String!
+}
+
+type User
+  @join__type(graph: ACCOUNTS, key: "id")
+{
+  id: ID!
+  name: String!
+  email: String!
+  recentlyViewed: [Product!]!
+}

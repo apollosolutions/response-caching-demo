@@ -1,0 +1,64 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.12", import: ["@key", "@cacheTag"])
+
+# Apollo Server turns @cacheControl hints into a Cache-Control response header.
+# The Router reads that header to decide whether, and for how long, to cache.
+enum CacheControlScope {
+  PUBLIC
+  PRIVATE
+}
+directive @cacheControl(
+  maxAge: Int
+  scope: CacheControlScope
+  inheritMaxAge: Boolean
+) on FIELD_DEFINITION | OBJECT | INTERFACE | UNION
+
+type Query {
+  "Root field: cached as one unit for 60s. Invalidate with tag `products`."
+  products: [Product!]! @cacheControl(maxAge: 60) @cacheTag(format: "products")
+
+  "Root field with an argument: tag is interpolated from $args → product-1, product-2, ..."
+  product(id: ID!): Product @cacheControl(maxAge: 60) @cacheTag(format: "product-{$args.id}")
+
+  "Used by scenario 02 to show per-entity reuse and partial hits."
+  productsByIds(ids: [ID!]!): [Product!]! @cacheControl(maxAge: 60)
+
+  "maxAge 0 → Apollo Server sends Cache-Control: no-store → never cached."
+  dealOfTheMinute: Deal @cacheControl(maxAge: 0)
+
+  "Always returns a GraphQL error. Responses with errors are never cached."
+  brokenProduct: Product @cacheControl(maxAge: 60)
+}
+
+type Mutation {
+  """
+  Updates a price, then calls the Router invalidation endpoint so the cached
+  product (tag product-{id}) and the product list (tag products) are evicted.
+  """
+  updateProductPrice(id: ID!, price: Float!): Product
+}
+
+"Entity: each Product representation is cached independently for 300s."
+type Product @key(fields: "id") @cacheControl(maxAge: 300) @cacheTag(format: "product-{$key.id}") {
+  id: ID!
+  name: String!
+  description: String
+  price: Float!
+  """
+  Resolved by the catalog connector (REST) through an entity fetch.
+  Gotcha: Apollo Server gives object-typed fields a default maxAge of 0, which
+  would make every response containing `brand` no-store. inheritMaxAge keeps
+  the parent's TTL.
+  """
+  brand: Brand @cacheControl(inheritMaxAge: true)
+}
+
+type Brand @key(fields: "id", resolvable: false) {
+  id: ID!
+}
+
+type Deal {
+  productId: ID!
+  discountPct: Int!
+  generatedAt: String!
+}

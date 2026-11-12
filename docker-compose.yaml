@@ -1,0 +1,95 @@
+# One command runs the whole demo:  docker compose up -d --build
+#
+#   Router (Sandbox + cache debugger)  http://localhost:4000
+#   Invalidation endpoint              http://localhost:4005/invalidation
+#   Client app (Apollo Client)         http://localhost:5173
+#   Grafana (cache dashboard)          http://localhost:3000
+#   Prometheus                         http://localhost:9090
+#   RedisInsight (browse cache keys)   http://localhost:5540
+#   Subgraphs (+ /__stats)             http://localhost:4001
+#   REST mock (+ /__stats)             http://localhost:4010
+
+services:
+  router:
+    image: ghcr.io/apollographql/router:v2.19.0
+    command: ["--config", "/dist/config/router.yaml", "--supergraph", "/dist/config/supergraph.graphql", "--hot-reload"]
+    env_file: .env
+    environment:
+      APOLLO_ROUTER_LOG: ${APOLLO_ROUTER_LOG:-info}
+    volumes:
+      # Mount the directory (not single files) so --hot-reload sees edits.
+      - ./router:/dist/config:ro
+    ports:
+      - "4000:4000" # GraphQL + Sandbox
+      - "4005:4005" # invalidation endpoint
+      - "8088:8088" # health check
+      - "9080:9080" # Prometheus metrics
+    depends_on:
+      redis:
+        condition: service_healthy
+      subgraphs:
+        condition: service_started
+      rest-api:
+        condition: service_started
+
+  subgraphs:
+    build: ./subgraphs
+    environment:
+      ROUTER_INVALIDATION_URL: http://router:4005/invalidation
+      INVALIDATION_SHARED_KEY: ${INVALIDATION_SHARED_KEY}
+    ports:
+      - "4001:4001"
+
+  rest-api:
+    build: ./rest-api
+    ports:
+      - "4010:4010"
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6380:6379" # 6380 on the host to avoid clashing with a local Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  redisinsight:
+    image: redis/redisinsight:2.70
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/response-cache.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  client:
+    build: ./client
+    environment:
+      VITE_ROUTER_URL: http://localhost:4000/
+    ports:
+      - "5173:5173"
+    depends_on:
+      - router

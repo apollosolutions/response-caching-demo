@@ -1,0 +1,21 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.12", import: ["@key"])
+
+# No @cacheControl here on purpose.
+#
+# This subgraph simulates a GraphQL server that doesn't support @cacheControl
+# but does send `Cache-Control: public` (without max-age) on every response.
+# The Router then uses the configured fallback TTL for this subgraph
+# (response_cache.subgraph.subgraphs.reviews.ttl = 45s in router.yaml).
+
+type Product @key(fields: "id") {
+  id: ID!
+  reviews: [Review!]!
+  averageRating: Float
+}
+
+type Review {
+  id: ID!
+  rating: Int!
+  body: String!
+}
